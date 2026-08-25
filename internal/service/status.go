@@ -97,7 +97,17 @@ func (runtime *Runtime) UpdateForecast(points []forecast.Point, now time.Time) (
 	if err != nil {
 		return forecast.Window{}, err
 	}
-	_ = previous
+	// The forecast revision changed: any permit bound to the previous window is
+	// now unsafe evidence. Invalidate it immediately so the gate group cannot keep
+	// acting on the stale low-peak window, then recompute the action from the new
+	// forecast crest and the current tide assessment.
+	if previous != window.RevisionID() {
+		runtime.interlocks.InvalidateForecast(window.RevisionID())
+	}
+	operationValue := runtime.operations.Current()
+	if _, err := runtime.interlocks.Recalculate(operationValue, now); err != nil {
+		return forecast.Window{}, err
+	}
 	return window, nil
 }
 
