@@ -45,7 +45,11 @@ func (coordinator *Coordinator) Start(pumpID string, request culvert.DrainageReq
 		return model.Pump{}, err
 	}
 	if _, err := coordinator.journal.SavePump(proof, now); err != nil {
-		_, _ = coordinator.state.PublishDraining(pumpID, request.Operation, epoch, now)
+		// The check valve proof is not durable, so draining must neither be
+		// published nor recoverable: roll the pump back to stopped instead of
+		// advancing it, otherwise a later snapshot would advertise a draining
+		// pump whose valve evidence is absent from the journal.
+		coordinator.state.Stop(pumpID, request.Operation.Generation, err.Error(), now)
 		return model.Pump{}, err
 	}
 	draining, err := coordinator.state.PublishDraining(pumpID, request.Operation, epoch, now)
