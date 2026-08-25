@@ -43,17 +43,19 @@ func (table *LeaseTable) Acquire(culvertID, owner string, direction model.LeaseD
 	}
 	now := table.clock().UTC()
 	table.mu.Lock()
-	current, exists := table.leases[culvertID]
-	table.mu.Unlock()
-	if exists && current.ExpiresAt.After(now) {
+	defer table.mu.Unlock()
+	// The conflict check and the lease assignment must run as a single atomic
+	// step. Splitting them lets two basins sharing one culvert each observe an
+	// empty slot, each mint its own lease, and both proceed to start pump
+	// groups with conflicting valve directions before either notices the flow
+	// path is contested. Hold the lock across both so the losing basin is
+	// rejected here rather than at the pump.
+	if current, exists := table.leases[culvertID]; exists && current.ExpiresAt.After(now) {
 		if current.Owner == owner && current.OperationID == operation.ID && current.OperationGeneration == operation.Generation && current.Direction == direction {
 			return current, nil
 		}
 		return model.CulvertLease{}, fmt.Errorf("culvert %s is owned by %s", culvertID, current.Owner)
 	}
-	time.Sleep(time.Millisecond)
-	table.mu.Lock()
-	defer table.mu.Unlock()
 	table.fencing[culvertID]++
 	lease := model.CulvertLease{
 		ID:                  uuid.New(),
